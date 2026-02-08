@@ -163,11 +163,6 @@ def _start_cleanup() -> None:
     thread.start()
 
 
-@app.get("/")
-def health():
-    return {"status": "ok"}
-
-
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
