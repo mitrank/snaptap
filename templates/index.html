@@ -1,0 +1,224 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SnapTap</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div class="badge">SnapTap</div>
+        <h1>Download YouTube audio or video in one step.</h1>
+        <p class="lede">
+          Paste one or many YouTube URLs, pick MP3 or MP4, and grab the files.
+          Multiple URLs can be separated by new lines or spaces.
+        </p>
+      </section>
+
+      <section class="panel">
+        <form class="form" id="download-form">
+          <label for="urls">YouTube URLs</label>
+          <textarea
+            id="urls"
+            name="urls"
+            rows="6"
+            placeholder="https://www.youtube.com/watch?v=...&#10;https://youtu.be/..."
+            required
+          ></textarea>
+
+          <div class="row">
+            <div class="field">
+              <label for="format">Format</label>
+              <select id="format" name="format">
+                <option value="mp3">MP3 (Audio)</option>
+                <option value="mp4">MP4 (Video)</option>
+              </select>
+            </div>
+
+            <button type="submit" id="download-button">Start download</button>
+          </div>
+        </form>
+
+        <div class="message" id="status-message" hidden></div>
+
+        <div class="progress" id="progress-panel" hidden>
+          <h2>Progress</h2>
+          <ul id="progress-list"></ul>
+        </div>
+
+        <div class="downloads" id="downloads-panel" hidden>
+          <h2>Downloads</h2>
+          <ul id="download-links"></ul>
+          <div class="zip" id="zip-link" hidden></div>
+        </div>
+      </section>
+
+      <section class="panel recent">
+        <h2>Recent downloads</h2>
+        <ul id="recent-list"></ul>
+      </section>
+
+      <section class="footer">
+        <div>
+          Files are prepared on the server, then your browser will ask where to
+          save them.
+        </div>
+        <div class="hint">
+          Large downloads can take a while. Keep this tab open until you see the
+          completion message.
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById("download-form");
+      const statusMessage = document.getElementById("status-message");
+      const progressPanel = document.getElementById("progress-panel");
+      const progressList = document.getElementById("progress-list");
+      const downloadsPanel = document.getElementById("downloads-panel");
+      const downloadLinks = document.getElementById("download-links");
+      const recentList = document.getElementById("recent-list");
+      const downloadButton = document.getElementById("download-button");
+      const zipLink = document.getElementById("zip-link");
+
+      const refreshRecent = async () => {
+        const response = await fetch("/api/recent");
+        if (!response.ok) return;
+        const recent = await response.json();
+        recentList.innerHTML = "";
+        if (!recent.length) {
+          recentList.innerHTML = "<li>No downloads yet.</li>";
+          return;
+        }
+        recent.forEach((job) => {
+          const item = document.createElement("li");
+          item.innerHTML = `<span class="mono">${job.id.slice(0, 8)}</span> · ${job.format.toUpperCase()} · ${job.url_count} URL(s) · ${job.status}`;
+          recentList.appendChild(item);
+        });
+      };
+
+      const renderProgress = (items) => {
+        progressList.innerHTML = "";
+        items.forEach((item) => {
+          const li = document.createElement("li");
+          const filename = item.filename ? ` (${item.filename})` : "";
+          const percent =
+            item.percent !== undefined && item.percent !== null
+              ? ` ${Math.round(item.percent)}%`
+              : "";
+          li.textContent = `${item.status.toUpperCase()}${percent}: ${filename}`;
+          progressList.appendChild(li);
+        });
+      };
+
+      const triggerDownload = (jobId, files) => {
+        if (!files.length) return;
+        const url = files.length > 1 ? `/api/files/${jobId}/zip` : `/api/files/${jobId}/0`;
+        const link = document.createElement("a");
+        link.href = url;
+        link.rel = "noopener";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      };
+
+      const renderDownloads = (jobId, files) => {
+        downloadLinks.innerHTML = "";
+        zipLink.hidden = true;
+        zipLink.innerHTML = "";
+
+        files.forEach((filename, index) => {
+          const li = document.createElement("li");
+          const link = document.createElement("a");
+          link.href = `/api/files/${jobId}/${index}`;
+          link.textContent = filename;
+          li.appendChild(link);
+          downloadLinks.appendChild(li);
+        });
+
+        if (files.length > 1) {
+          const link = document.createElement("a");
+          link.href = `/api/files/${jobId}/zip`;
+          link.textContent = "Download all as .zip";
+          zipLink.appendChild(link);
+          zipLink.hidden = false;
+        }
+      };
+
+      const pollStatus = async (jobId) => {
+        let done = false;
+        while (!done) {
+          const response = await fetch(`/api/status/${jobId}`);
+          if (!response.ok) {
+            statusMessage.textContent = "Unable to get status.";
+            return;
+          }
+          const data = await response.json();
+          progressPanel.hidden = false;
+          renderProgress(data.items);
+          if (data.status === "error") {
+            statusMessage.textContent = `Error: ${data.error}`;
+            statusMessage.hidden = false;
+            done = true;
+          } else if (data.status === "finished") {
+            statusMessage.textContent = "Download complete.";
+            statusMessage.hidden = false;
+            downloadsPanel.hidden = false;
+            renderDownloads(jobId, data.files);
+            triggerDownload(jobId, data.files);
+            done = true;
+          }
+          if (!done) {
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+          }
+        }
+        downloadButton.disabled = false;
+        await refreshRecent();
+      };
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        statusMessage.hidden = true;
+        downloadsPanel.hidden = true;
+        progressPanel.hidden = true;
+        downloadButton.disabled = true;
+        progressList.innerHTML = "";
+        downloadLinks.innerHTML = "";
+        zipLink.hidden = true;
+
+        const urls = document.getElementById("urls").value;
+        const format = document.getElementById("format").value;
+
+        const response = await fetch("/api/download", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ urls, format }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          statusMessage.textContent =
+            data.detail || "Unable to start download.";
+          statusMessage.hidden = false;
+          downloadButton.disabled = false;
+          return;
+        }
+
+        const data = await response.json();
+        statusMessage.textContent = "Download started...";
+        statusMessage.hidden = false;
+        pollStatus(data.job_id);
+      });
+
+      refreshRecent();
+    </script>
+  </body>
+</html>
