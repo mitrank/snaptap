@@ -22,7 +22,7 @@ uvicorn app:app --reload
 4. Open `http://127.0.0.1:8000` in your browser.
 
 ## Environment Variables
-Set these in your shell or in a `.env` file.
+Set these in your shell or in a `.env` file. The app loads `.env` automatically via `python-dotenv`.
 
 1. `YTDLP_COOKIES_FILE` (optional)
    Path to a cookies.txt file if you need authenticated access.
